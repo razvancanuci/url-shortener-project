@@ -37,3 +37,8 @@ The project has the following diagram:
 Below there is a gif with a demo run on local machine:
 
 ![See demo](./assets/demo.gif)
+
+The UI uses the vue-i18n and it checks the user's location. The default is en-US, but also the romanian is completed.
+Below there is an image with the UI in romanian:
+
+<img src="assets/romanian.png" alt="i18n-ro">
