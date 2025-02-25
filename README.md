@@ -23,7 +23,7 @@ A simple URL shortening service that allows users to convert long links into sho
 ## Technologies Used
 
 - **Backend:** Rust (Actix-web)
-- **Database:** PostgreSQL
+- **Database:** PostgreSQL (Amazon Aurora)
 - **Frontend:** Vue (Quasar Framework)
 - **Storage:** Amazon S3 with CloudFront for QR code image hosting
 
@@ -34,3 +34,8 @@ The project has the following diagram:
 
 <br />
 
+Below there is a video with a demo run on local machine:
+
+<video width="640" height="360" controls allowfullscreen>
+  <source src="assets/demo.mp4" type="video/mp4">
+</video>
