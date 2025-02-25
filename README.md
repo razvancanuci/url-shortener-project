@@ -34,6 +34,6 @@ The project has the following diagram:
 
 <br />
 
-Below there is a video with a demo run on local machine:
+Below there is a gif with a demo run on local machine:
 
-[See demo](./assets/demo.mp4)
+![See demo](./assets/demo.gif)
