@@ -36,6 +36,4 @@ The project has the following diagram:
 
 Below there is a video with a demo run on local machine:
 
-<video width="640" height="360" controls allowfullscreen>
-  <source src="assets/demo.mp4" type="video/mp4">
-</video>
+[See demo](./assets/demo.mp4)
