@@ -1,0 +1,24 @@
+[package]
+name = "url-shortener-application"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+url-shortener-database = { path = "../url-shortener-database" }
+url-shortener-infrastructure = { path = "../url-shortener-infrastructure" }
+serde = { version = "1.0.217", features = ["derive"] }
+rand = "0.9.0"
+async-trait = "0.1.86"
+coi = "0.10.3"
+log = "0.4.25"
+thiserror = "2.0.11"
+url = "2.5.4"
+qrcode-generator = "5.0.0"
+error-stack = "0.5.0"
+mockall = "0.13.1"
+tokio = { version = "1.43.0", features = ["full"] }
+
+[lints.rust]
+unused_imports = "deny"
+unsafe_code = "forbid"
+warnings= "deny"

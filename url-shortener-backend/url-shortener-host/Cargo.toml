@@ -1,0 +1,22 @@
+[package]
+name = "url-shortener-host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+url-shortener-webapi = { path = "../url-shortener-webapi" }
+url-shortener-application = { path = "../url-shortener-application" }
+url-shortener-database = { path = "../url-shortener-database" }
+url-shortener-infrastructure = { path = "../url-shortener-infrastructure" }
+actix-web = "4.9.0"
+dotenv = "0.15.0"
+actix-governor = "0.8"
+coi = "0.10.3"
+coi-actix-web = "0.7.1"
+env_logger = "0.11.6"
+actix-cors = "0.7.0"
+
+[lints.rust]
+unused_imports = "deny"
+unsafe_code = "forbid"
+warnings= "deny"

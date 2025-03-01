@@ -1,0 +1,34 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- main
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - script: curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain stable      
+    displayName: 'Install Rust'
+  
+  - script: cargo install cargo-tarpaulin
+    displayName: 'Install cargo-tarpaulin'
+
+  - script:  cargo tarpaulin --out Xml
+    displayName: 'Build & Run unit tests'
+    continueOnError: false
+  
+  - task: PublishCodeCoverageResults@2
+    displayName: 'Publish code coverage report'
+    inputs:
+      codeCoverageTool: 'Cobertura'
+      summaryFileLocation: '$(Build.SourcesDirectory)/cobertura.xml'
+      failIfCoverageEmpty: false
+   

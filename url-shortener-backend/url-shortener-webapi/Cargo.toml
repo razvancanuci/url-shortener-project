@@ -1,0 +1,16 @@
+[package]
+name = "url-shortener-webapi"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+actix-web = "4.9.0"
+url-shortener-application = { path = "../url-shortener-application" }
+coi = "0.10.3"
+coi-actix-web = "0.7.1"
+serde = { version = "1.0.217", features = ["derive"] }
+
+[lints.rust]
+unused_imports = "deny"
+unsafe_code = "forbid"
+warnings= "deny"

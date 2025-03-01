@@ -42,3 +42,8 @@ The UI uses the vue-i18n and it checks the user's location. The default is en-US
 Below there is an image with the UI in romanian:
 
 <img src="assets/romanian.png" alt="i18n-ro">
+
+<br />
+
+
+There are also some build pipleines created in Azure Devops for making sure that the project can be deployed perfectly
