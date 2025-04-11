@@ -10,6 +10,7 @@ use rand::{rng, Rng};
 use std::sync::Arc;
 use url::Url;
 use url_shortener_database::repositories::url_repository::UrlRepositoryTrait;
+use url_shortener_infrastructure::redis::redis_client::{RedisClientWrapperTrait};
 use url_shortener_infrastructure::s3::s3_client::S3ClientWrapperTrait;
 
 const CODE_LENGTH: usize = 6;
@@ -24,22 +25,26 @@ pub trait UrlServiceTrait: Inject {
 }
 
 #[derive(Inject)]
-#[coi(provides pub dyn UrlServiceTrait with UrlService::new(url_repository, s3_client_wrapper))]
+#[coi(provides pub dyn UrlServiceTrait with UrlService::new(url_repository, s3_client_wrapper, redis_client_wrapper))]
 struct UrlService {
     #[coi(inject)]
     url_repository: Arc<dyn UrlRepositoryTrait>,
     #[coi(inject)]
     s3_client_wrapper: Arc<dyn S3ClientWrapperTrait>,
+    #[coi(inject)]
+    redis_client_wrapper: Arc<dyn RedisClientWrapperTrait>
 }
 
 impl UrlService {
     pub fn new(
         url_repository: Arc<dyn UrlRepositoryTrait>,
         s3_client_wrapper: Arc<dyn S3ClientWrapperTrait>,
+        redis_client_wrapper: Arc<dyn RedisClientWrapperTrait>
     ) -> Self {
         Self {
             url_repository,
             s3_client_wrapper,
+            redis_client_wrapper
         }
     }
 
@@ -116,6 +121,7 @@ impl UrlServiceTrait for UrlService {
             Ok(_) => {
                 let cloud_front_url =
                     std::env::var("CLOUD_FRONT_URL").expect("CLOUD_FRONT_URL must be set");
+                let _ = self.redis_client_wrapper.set_cache(&result.id, &result.url).await;
                 Ok(CreateResponseModel {
                     short_url: format!("{}/{}", domain, result.id),
                     qr_code_image: format!("{}/{}", cloud_front_url, file_name),
@@ -129,12 +135,26 @@ impl UrlServiceTrait for UrlService {
     }
 
     async fn get_long_url(&self, short_url: &str) -> Result<String, ApiError> {
+        
+        let url_cache = self.redis_client_wrapper.get_cache(short_url).await;
+        
+        if url_cache.is_ok() {
+            return Ok(url_cache.unwrap());
+        }
+        
+        if  url_cache.is_err() {
+            warn!("Failed to fetch url cache for {short_url}");
+        } 
+        
         let url = self.url_repository.find(short_url).await;
         match url {
             Ok(u) => match u {
-                Some(u) => Ok(u.url),
+                Some(u) => {
+                    let _ = self.redis_client_wrapper.set_cache(short_url, &u.url).await;
+                    Ok(u.url)
+                },
                 None => {
-                    log::warn!("Short url not found: {:?}", short_url);
+                    warn!("Short url not found: {:?}", short_url);
                     Err(ApiError::NotFound("The url with this format was not found"))
                 }
             },
@@ -158,30 +178,33 @@ mod tests {
     use url_shortener_database::models::errors::DatabaseError;
     use url_shortener_database::models::url_models::Url;
     use url_shortener_database::repositories::url_repository::MockUrlRepositoryTrait;
+    use url_shortener_infrastructure::redis::redis_client::MockRedisClientWrapperTrait;
     use url_shortener_infrastructure::s3::error::S3Error;
     use url_shortener_infrastructure::s3::s3_client::MockS3ClientWrapperTrait;
     
     const TEST_SHORT_URL: &str = "1234556";
     const TEST_VALID_URL: &str = "https://www.google.com";
 
-    fn setup_mocks() -> (MockUrlRepositoryTrait, MockS3ClientWrapperTrait) {
+    fn setup_mocks() -> (MockUrlRepositoryTrait, MockS3ClientWrapperTrait, MockRedisClientWrapperTrait) {
         let repository = MockUrlRepositoryTrait::new();
         let s3_client = MockS3ClientWrapperTrait::new();
-        (repository, s3_client)
+        let redis_client = MockRedisClientWrapperTrait::new();
+        (repository, s3_client, redis_client)
     }
     
     #[tokio::test]
     async fn get_long_url_returns_internal_server_error() {
         // Arrange
-        let (mut repository, client) = setup_mocks();
-        let s3_client = Arc::new(client);
+        let (mut repository, s3_client, redis_client) = setup_mocks();
+        let s3_client = Arc::new(s3_client);
+        let redis_client = Arc::new(redis_client);
 
         repository
             .expect_find()
             .with(eq(TEST_SHORT_URL))
             .returning(|_| Box::pin(async { Err(Report::from(DatabaseError {})) }));
 
-        let url_service = super::UrlService::new(Arc::new(repository), s3_client);
+        let url_service = super::UrlService::new(Arc::new(repository), s3_client, redis_client);
 
         // Act
         let result = url_service.get_long_url(TEST_SHORT_URL).await;
@@ -194,15 +217,16 @@ mod tests {
     #[tokio::test]
     async fn get_long_url_returns_not_found_error() {
         // Arrange
-        let (mut repository, client) = setup_mocks();
+        let (mut repository, client, redis_client) = setup_mocks();
         let s3_client = Arc::new(client);
+        let redis_client = Arc::new(redis_client);
 
         repository
             .expect_find()
             .with(eq(TEST_SHORT_URL))
             .returning(|_| Box::pin(async { Ok(None) }));
 
-        let url_service = super::UrlService::new(Arc::new(repository), s3_client);
+        let url_service = super::UrlService::new(Arc::new(repository), s3_client, redis_client);
 
         // Act
         let result = url_service.get_long_url(TEST_SHORT_URL).await;
@@ -218,8 +242,9 @@ mod tests {
     #[tokio::test]
     async fn get_long_url_returns_ok() {
         // Arrange
-        let (mut repository, client) = setup_mocks();
+        let (mut repository, client, redis_client) = setup_mocks();
         let s3_client = Arc::new(client);
+        let redis_client = Arc::new(redis_client);
 
         repository.expect_find().with(eq(TEST_SHORT_URL)).returning(|_| {
             Box::pin(async {
@@ -230,7 +255,7 @@ mod tests {
             })
         });
 
-        let url_service = super::UrlService::new(Arc::new(repository), s3_client);
+        let url_service = super::UrlService::new(Arc::new(repository), s3_client, redis_client);
 
         // Act
         let result = url_service.get_long_url(TEST_SHORT_URL).await;
@@ -242,14 +267,15 @@ mod tests {
     #[tokio::test]
     async fn create_url_returns_url_empty_error() {
         // Arrange
-        let (repository, s3_client) = setup_mocks();
+        let (repository, s3_client, redis_client) = setup_mocks();
         let repository = Arc::new(repository);
         let s3_client = Arc::new(s3_client);
+        let redis_client = Arc::new(redis_client);
 
         let request = CreateUrlRequest {
             url: "".to_string(),
         };
-        let url_service = super::UrlService::new(repository, s3_client);
+        let url_service = super::UrlService::new(repository, s3_client, redis_client);
 
         // Act
         let result = url_service.create_short_url(request).await;
@@ -262,14 +288,15 @@ mod tests {
     #[tokio::test]
     async fn crate_url_returns_invalid_url_error() {
         // Arrange
-        let (repository, s3_client) = setup_mocks();
+        let (repository, s3_client, redis_client) = setup_mocks();
         let repository = Arc::new(repository);
         let s3_client = Arc::new(s3_client);
+        let redis_client = Arc::new(redis_client);
 
         let request = CreateUrlRequest {
             url: "invalid_url".to_string(),
         };
-        let url_service = super::UrlService::new(repository, s3_client);
+        let url_service = super::UrlService::new(repository, s3_client, redis_client);
 
         // Act
         let result = url_service.create_short_url(request).await;
@@ -282,8 +309,9 @@ mod tests {
     #[tokio::test]
     async fn create_url_on_database_returns_internal_server_error() {
         // Arrange
-        let (mut repository, client) = setup_mocks();
+        let (mut repository, client, redis_client) = setup_mocks();
         let s3_client = Arc::new(client);
+        let redis_client = Arc::new(redis_client);
 
         let request = CreateUrlRequest {
             url: TEST_VALID_URL.to_string(),
@@ -293,7 +321,7 @@ mod tests {
             .with(always())
             .returning(|_| Box::pin(async { Err(Report::from(DatabaseError {})) }));
 
-        let url_service = super::UrlService::new(Arc::new(repository), s3_client);
+        let url_service = super::UrlService::new(Arc::new(repository), s3_client, redis_client);
 
         // Act
         let result = url_service.create_short_url(request).await;
@@ -306,7 +334,8 @@ mod tests {
     async fn create_url_on_s3_returns_internal_server_error() {
         // Arrange
         env::set_var("APP_DOMAIN", "yes");
-        let (mut repository, mut s3_client) = setup_mocks();
+        let (mut repository, mut s3_client, redis_client) = setup_mocks();
+        let redis_client = Arc::new(redis_client);
 
         let request = CreateUrlRequest {
             url: TEST_VALID_URL.to_string(),
@@ -325,7 +354,7 @@ mod tests {
             .with(always(), always())
             .returning(|_, _| Box::pin(async { Err(Report::new(S3Error {})) }));
 
-        let url_service = super::UrlService::new(Arc::new(repository), Arc::new(s3_client));
+        let url_service = super::UrlService::new(Arc::new(repository), Arc::new(s3_client), redis_client);
 
         // Act
         let result = url_service.create_short_url(request).await;
@@ -340,7 +369,8 @@ mod tests {
         // Arrange
         env::set_var("APP_DOMAIN", "yes");
         env::set_var("CLOUD_FRONT_URL", "yes");
-        let (mut repository, mut s3_client) = setup_mocks();
+        let (mut repository, mut s3_client, redis_client) = setup_mocks();
+        let redis_client = Arc::new(redis_client);
 
         let request = CreateUrlRequest {
             url: TEST_VALID_URL.to_string(),
@@ -359,7 +389,7 @@ mod tests {
             .with(always(), always())
             .returning(|_, _| Box::pin(async { Ok(()) }));
 
-        let url_service = super::UrlService::new(Arc::new(repository), Arc::new(s3_client));
+        let url_service = super::UrlService::new(Arc::new(repository), Arc::new(s3_client), redis_client);
 
         // Act
         let result = url_service.create_short_url(request).await;
