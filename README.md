@@ -8,6 +8,7 @@
     <img src ="assets/postgres.png" alt="Postgres" width = 100 height = 100 />
     <img src ="assets/aws.png" alt="AWS" width = 100 height = 100 />
     <img src ="assets/azure-devops.png" alt="Azure Devops" width = 100 height = 100 />
+    <img src ="assets/redis.png" alt="Redis" width = 100 height = 100 />
 </div>
 
 <br />
