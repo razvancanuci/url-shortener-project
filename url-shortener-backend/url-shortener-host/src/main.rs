@@ -9,6 +9,8 @@ use std::env;
 use url_shortener_application::services::url_service::UrlServiceProvider;
 use url_shortener_database::database::pool::{crete_database_connection, PgPoolProvider};
 use url_shortener_database::repositories::url_repository::UrlRepositoryProvider;
+use url_shortener_infrastructure::redis::config::create_redis_pool;
+use url_shortener_infrastructure::redis::redis_client::RedisClientProvider;
 use url_shortener_infrastructure::s3::config::create_s3_client;
 use url_shortener_infrastructure::s3::s3_client::S3ClientProvider;
 use url_shortener_webapi::register_api;
@@ -27,8 +29,11 @@ pub async fn main() -> std::io::Result<()> {
     let db = PgPoolProvider::new(pg_pool);
     let s3_client = create_s3_client().await;
     let s3_client_wrapper = S3ClientProvider::new(s3_client);
+    let redis_client = create_redis_pool();
+    let redis_client_wrapper = RedisClientProvider::new(redis_client);
 
     let container = container! {
+        redis_client_wrapper => redis_client_wrapper; singleton,
         s3_client_wrapper => s3_client_wrapper; singleton,
         db => db; singleton,
         url_service => UrlServiceProvider; scoped,

@@ -24,6 +24,7 @@ A simple URL shortening service that allows users to convert long links into sho
 
 - **Backend:** Rust (Actix-web)
 - **Database:** PostgreSQL (Amazon Aurora)
+- **Cache:** Redis (ElastiCache)
 - **Frontend:** Vue (Quasar Framework)
 - **Storage:** Amazon S3 with CloudFront for QR code image hosting
 
