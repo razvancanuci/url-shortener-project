@@ -1,3 +1,3 @@
 pub mod redis_client;
 pub mod config;
-mod error;
+pub mod error;

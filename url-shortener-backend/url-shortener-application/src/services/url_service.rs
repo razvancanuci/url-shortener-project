@@ -143,7 +143,7 @@ impl UrlServiceTrait for UrlService {
         }
         
         if  url_cache.is_err() {
-            warn!("Failed to fetch url cache for {short_url}");
+            warn!("Failed to fetch url cache: {}", url_cache.unwrap_err());
         } 
         
         let url = self.url_repository.find(short_url).await;
@@ -178,7 +178,8 @@ mod tests {
     use url_shortener_database::models::errors::DatabaseError;
     use url_shortener_database::models::url_models::Url;
     use url_shortener_database::repositories::url_repository::MockUrlRepositoryTrait;
-    use url_shortener_infrastructure::redis::redis_client::MockRedisClientWrapperTrait;
+    use url_shortener_infrastructure::redis::error::CacheError;
+    use url_shortener_infrastructure::redis::redis_client::{MockRedisClientWrapperTrait};
     use url_shortener_infrastructure::s3::error::S3Error;
     use url_shortener_infrastructure::s3::s3_client::MockS3ClientWrapperTrait;
     
@@ -193,18 +194,22 @@ mod tests {
     }
     
     #[tokio::test]
-    async fn get_long_url_returns_internal_server_error() {
+    async fn get_long_url_cache_miss_returns_internal_server_error() {
         // Arrange
-        let (mut repository, s3_client, redis_client) = setup_mocks();
+        let (mut repository, s3_client, mut redis_client) = setup_mocks();
         let s3_client = Arc::new(s3_client);
-        let redis_client = Arc::new(redis_client);
 
         repository
             .expect_find()
             .with(eq(TEST_SHORT_URL))
             .returning(|_| Box::pin(async { Err(Report::from(DatabaseError {})) }));
 
-        let url_service = super::UrlService::new(Arc::new(repository), s3_client, redis_client);
+        redis_client.expect_get_cache()
+            .with(always())
+            .returning(|_| Box::pin(async { Err(Report::new(CacheError{})) }));
+
+
+        let url_service = super::UrlService::new(Arc::new(repository), s3_client, Arc::new(redis_client));
 
         // Act
         let result = url_service.get_long_url(TEST_SHORT_URL).await;
@@ -215,18 +220,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_long_url_returns_not_found_error() {
+    async fn get_long_url_cache_miss_returns_not_found_error() {
         // Arrange
-        let (mut repository, client, redis_client) = setup_mocks();
+        let (mut repository, client, mut redis_client) = setup_mocks();
         let s3_client = Arc::new(client);
-        let redis_client = Arc::new(redis_client);
 
         repository
             .expect_find()
             .with(eq(TEST_SHORT_URL))
             .returning(|_| Box::pin(async { Ok(None) }));
 
-        let url_service = super::UrlService::new(Arc::new(repository), s3_client, redis_client);
+        redis_client.expect_get_cache()
+            .with(always())
+            .returning(|_| Box::pin(async { Err(Report::new(CacheError{})) }));
+        
+        let url_service = super::UrlService::new(Arc::new(repository), s3_client, Arc::new(redis_client));
 
         // Act
         let result = url_service.get_long_url(TEST_SHORT_URL).await;
@@ -240,11 +248,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_long_url_returns_ok() {
+    async fn get_long_url_cache_hit_returns_ok() {
         // Arrange
-        let (mut repository, client, redis_client) = setup_mocks();
+        let (repository, client, mut redis_client) = setup_mocks();
         let s3_client = Arc::new(client);
-        let redis_client = Arc::new(redis_client);
+        
+        redis_client.expect_get_cache()
+            .with(always())
+            .returning(|_| Box::pin(async { Ok("url".to_string()) }));
+        
+        let url_service = super::UrlService::new(Arc::new(repository), s3_client, Arc::new(redis_client));
+
+        // Act
+        let result = url_service.get_long_url(TEST_SHORT_URL).await;
+
+        // Assert
+        assert!(result.is_ok());
+        assert!(result.ok().is_some());
+    }
+
+    #[tokio::test]
+    async fn get_long_url_cache_miss_returns_ok() {
+        // Arrange
+        let (mut repository, client, mut redis_client) = setup_mocks();
+        let s3_client = Arc::new(client);
 
         repository.expect_find().with(eq(TEST_SHORT_URL)).returning(|_| {
             Box::pin(async {
@@ -255,7 +282,15 @@ mod tests {
             })
         });
 
-        let url_service = super::UrlService::new(Arc::new(repository), s3_client, redis_client);
+        redis_client.expect_get_cache()
+            .with(always())
+            .returning(|_| Box::pin(async { Err(Report::new(CacheError{})) }));
+
+        redis_client.expect_set_cache()
+            .with(always(), always())
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+
+        let url_service = super::UrlService::new(Arc::new(repository), s3_client, Arc::new(redis_client));
 
         // Act
         let result = url_service.get_long_url(TEST_SHORT_URL).await;
@@ -264,6 +299,7 @@ mod tests {
         assert!(result.is_ok());
         assert!(result.ok().is_some());
     }
+    
     #[tokio::test]
     async fn create_url_returns_url_empty_error() {
         // Arrange
@@ -286,7 +322,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn crate_url_returns_invalid_url_error() {
+    async fn create_url_returns_invalid_url_error() {
         // Arrange
         let (repository, s3_client, redis_client) = setup_mocks();
         let repository = Arc::new(repository);
@@ -365,12 +401,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_url_returns_ok() {
+    async fn create_url_cache_ok_returns_ok() {
         // Arrange
         env::set_var("APP_DOMAIN", "yes");
         env::set_var("CLOUD_FRONT_URL", "yes");
-        let (mut repository, mut s3_client, redis_client) = setup_mocks();
-        let redis_client = Arc::new(redis_client);
+        let (mut repository, mut s3_client, mut redis_client) = setup_mocks();
+
+        let request = CreateUrlRequest {
+            url: TEST_VALID_URL.to_string(),
+        };
+        repository.expect_create().with(always()).returning(|_| {
+            Box::pin(async {
+                Ok(Url {
+                    id: TEST_SHORT_URL.to_string(),
+                    url: TEST_VALID_URL.to_string(),
+                })
+            })
+        });
+
+        s3_client
+            .expect_upload_image()
+            .with(always(), always())
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+        
+        redis_client.expect_set_cache()
+            .with(always(), always())
+            .returning(|_, _| Box::pin(async { Ok(()) }));
+
+        let url_service = super::UrlService::new(Arc::new(repository), Arc::new(s3_client), Arc::new(redis_client));
+
+        // Act
+        let result = url_service.create_short_url(request).await;
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn create_url_cache_error_returns_ok() {
+        // Arrange
+        env::set_var("APP_DOMAIN", "yes");
+        env::set_var("CLOUD_FRONT_URL", "yes");
+        let (mut repository, mut s3_client, mut redis_client) = setup_mocks();
 
         let request = CreateUrlRequest {
             url: TEST_VALID_URL.to_string(),
@@ -389,7 +461,11 @@ mod tests {
             .with(always(), always())
             .returning(|_, _| Box::pin(async { Ok(()) }));
 
-        let url_service = super::UrlService::new(Arc::new(repository), Arc::new(s3_client), redis_client);
+        redis_client.expect_set_cache()
+            .with(always(), always())
+            .returning(|_, _| Box::pin(async { Err(Report::new(CacheError{})) }));
+
+        let url_service = super::UrlService::new(Arc::new(repository), Arc::new(s3_client), Arc::new(redis_client));
 
         // Act
         let result = url_service.create_short_url(request).await;
